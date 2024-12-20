@@ -34,47 +34,58 @@ def get_pillar_for_env(minion_id, pillarenv):
     return pillar_data
 
 
-def compare_incoming_to_target(target_pillarenv, incoming_pillarenv, path=None):
+def determine_changes(target_pillarenv, incoming_pillarenv, path=None):
     """
     Compare the pillar data for a minion in two different environments.
 
     Args:
         target_pillarenv (str): The target environment.
         incoming_pillarenv (str): The incoming environment.
-        path (str): The path to compare. If None, the entire pillar will be compared.
 
     Returns:
         dict: The differences between the two environments.
     """
-    if path is None:
-        path = []
+    changes = {}
 
-    changes = []
     for key in target_pillarenv.keys():
         if key not in incoming_pillarenv:
-            if path:
-                changes.append(":".join(path + [key]) + ";removed")
-                continue
+            changes[key] = "removed"
+            continue
 
         if key in incoming_pillarenv:
             if isinstance(target_pillarenv[key], dict):
-                changes.extend(
-                    compare_incoming_to_target(
-                        target_pillarenv[key], incoming_pillarenv[key], path + [key]
-                    )
+                changes[key] = {}
+                changes[key].update(
+                    determine_changes(target_pillarenv[key], incoming_pillarenv[key])
                 )
                 continue
 
             if target_pillarenv[key] != incoming_pillarenv[key]:
-                changes.append(":".join(path + [key]) + ";modified")
+                changes[key] = "modified"
+            else:
+                # del changes[key]
+                changes[key] = "unchanged"
 
     for key in incoming_pillarenv.keys():
         if key not in target_pillarenv:
-            if path:
-                # Skipping top level keys, added minions output elsewhere
-                changes.append(":".join(path + [key]) + ";added")
+            changes[key] = "added"
 
     return changes
+
+
+def remove_unchanged(data):
+    if isinstance(data, dict):
+        keys_to_remove = []
+        for key, value in data.items():
+            if isinstance(value, dict):
+                remove_unchanged(value)
+                if not value:  # if the dictionary is empty after removing unchanged
+                    keys_to_remove.append(key)
+            elif value == "unchanged":
+                keys_to_remove.append(key)
+        for key in keys_to_remove:
+            del data[key]
+    return data
 
 
 def validate_pr(minion_ids, target_pillarenv, incoming_pillarenv):
@@ -88,10 +99,10 @@ def validate_pr(minion_ids, target_pillarenv, incoming_pillarenv):
         dict: The differences between the two environments.
 
     CLI Example:
-    
+
       Check for any differences between the base and dev.change_common_pillar
       pillar environments for the web01.local and srv01.local minions
- 
+
     .. code-block:: bash
      salt-run citools.validate_pr '[web01.local,srv01.local]' base dev.change_common_pillar
 
@@ -106,4 +117,6 @@ def validate_pr(minion_ids, target_pillarenv, incoming_pillarenv):
         target_pillar[id] = target_pillar_content
         incoming_pillar[id] = incoming_pillar_content
 
-    return compare_incoming_to_target(target_pillar, incoming_pillar)
+    compared_pillar = determine_changes(target_pillar, incoming_pillar)
+    changes = remove_unchanged(compared_pillar)
+    return changes
