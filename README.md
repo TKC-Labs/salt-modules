@@ -14,3 +14,46 @@ Functions:
   - `validate_pr `: Validate a PR by comparing the pillar data for the PR's target and incoming environments.
   - Other helper functions to make the advertised functions above work.
   - Dependencies: specific `git_pillar` configuration requirements need to be met.
+
+### Example output: validate_pr
+
+This is a very minimal example where I added demo keys to a salt pillar repository to demonstrate the kind of output the `vaidate_pr` function can help create.
+
+#### Salt Pillar Validation: `success`
+
+```console
+salt01.tkclabs.io:
+    ----------
+    salt:
+        ----------
+        demo_key01:
+            added
+
+
+ghar01.tkclabs.io:
+    ----------
+    ghar:
+        ----------
+        testing_key01:
+            added
+        testing_key02:
+            added
+
+
+ghar02.tkclabs.io:
+    ----------
+    ghar:
+        ----------
+        testing_key01:
+            added
+        testing_key02:
+            added
+
+
+salt-ci01.tkclabs.io:
+    ----------
+    salt:
+        ----------
+        demo_key01:
+            added
+```
