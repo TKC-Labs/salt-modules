@@ -6,11 +6,43 @@ Provides utility functions that CI workflows might find helpful which can be exp
 
 import logging
 
-import salt.config
-import salt.loader
-import salt.pillar
+# This lets us python -m pydoc modules/runners/citools.py and not need
+# to worry about the salt dependency in the available python environment.
+try:
+    import salt.config
+    import salt.loader
+    import salt.pillar
+except ImportError:
+    salt = None
 
 log = logging.getLogger(__name__)
+
+
+def _remove_unchanged(data):
+    """
+    Removes dict tree nodes that are marked as "unchanged".
+
+    This is a helper function to adjust the final output produced by the
+    validate_pr function.
+
+    Args:
+        data (dict): The dictionary to remove unchanged nodes from.
+
+    Returns:
+        dict: The dictionary with unchanged nodes removed.
+    """
+    if isinstance(data, dict):
+        keys_to_remove = []
+        for key, value in data.items():
+            if isinstance(value, dict):
+                remove_unchanged(value)
+                if not value:  # if the dictionary is empty after removing unchanged
+                    keys_to_remove.append(key)
+            elif value == "unchanged":
+                keys_to_remove.append(key)
+        for key in keys_to_remove:
+            del data[key]
+    return data
 
 
 def get_pillar_for_env(minion_id, pillarenv):
@@ -18,11 +50,16 @@ def get_pillar_for_env(minion_id, pillarenv):
     Get the pillar data for a minion in a specific environment.
 
     Args:
-        minion_id (str): The minion ID.
-        env (str): The environment.
+        minion_id (str): The minion ID. (hostname, fqdn, etc.)
+        env (str): The environment. (base, dev.<change_id>)
+
+          In salt the "base" environment often maps to either the "main" or
+          "master" branch. Other environments can be statically mapped to
+          branches but using dynamic __env__ mapping is better for CI
+          purposes.
 
     Returns:
-        dict: The pillar data.
+        dict: The rendered pillar data for the minion_id and pillarenv
     """
     opts = salt.config.master_config("/etc/salt/master")
 
@@ -34,16 +71,153 @@ def get_pillar_for_env(minion_id, pillarenv):
     return pillar_data
 
 
-def determine_changes(target_pillarenv, incoming_pillarenv, path=None):
+def determine_changes(target_pillarenv, incoming_pillarenv):
     """
     Compare the pillar data for a minion in two different environments.
 
     Args:
-        target_pillarenv (str): The target environment.
-        incoming_pillarenv (str): The incoming environment.
+        target_pillarenv (dict): A dict of the pillar rendered for the
+          target pillar environment / branch.
+
+          Example:
+            .. code-block:: python
+            {
+                "ghar01.tkclabs.io": {
+                    "common": {
+                        "demo_key01": "demo_key01_value01",
+                        "demo_key02": {
+                            "demo_nestedkey01": "demo_nestedkey01_value",
+                            "demo_nestedkey02": "demo_nestedkey02_value"
+                        },
+                        "demo_key04": "demo_key04_value01"
+                    },
+                    "ghar": {
+                        "lookup": {
+                            "token": "REDACTED"
+                        },
+                        "demo_key01": "demo_key01_value01",
+                        "demo_key02": {
+                            "demo_nestedkey01": "demo_nestedkey01_value",
+                            "demo_nestedkey02": "demo_nestedkey02_value"
+                        }
+                    }
+                },
+                "salt01.tkclabs.io": {
+                    "common": {
+                        "demo_key01": "demo_key01_value01",
+                        "demo_key02": {
+                            "demo_nestedkey01": "demo_nestedkey01_value",
+                            "demo_nestedkey02": "demo_nestedkey02_value"
+                        },
+                        "demo_key04": "demo_key04_value01"
+                    },
+                    "salt": {
+                        "lookup": {
+                            "master": "salt.tkclabs.io",
+                            "salt_api": {
+                                "certificate_contents": "SomeCertContent",
+                                "private_key_contents": "SomePrivKeyContent"
+                            }
+                        }
+                    }
+                }
+            }
+
+        incoming_pillarenv (dict): A dict of the pillar rendered for the
+          incoming pillar environment / branch.
+
+          Example:
+            .. code-block:: python
+            {
+                "ghar01.tkclabs.io": {
+                    "common": {
+                        "demo_key01": "demo_key01_value01 modified",
+                        "demo_key02": {
+                            "demo_nestedkey01": "demo_nestedkey01_value",
+                            "demo_nestedkey02": "demo_nestedkey02_value",
+                            "demo_nestedkey02": "demo_nestedkey02_value added"
+                        },
+                        "demo_key04": "demo_key04_value01"
+                    },
+                    "ghar": {
+                        "lookup": {
+                            "token": "REDACTED"
+                        },
+                        "demo_key01": "demo_key01_value01",
+                        "demo_key02": {
+                            "demo_nestedkey01": "demo_nestedkey01_value",
+                            "demo_nestedkey02": "demo_nestedkey02_value"
+                        }
+                    }
+                },
+                "salt01.tkclabs.io": {
+                    "common": {
+                        "demo_key01": "demo_key01_value01",
+                        "demo_key02": {
+                            "demo_nestedkey01": "demo_nestedkey01_value",
+                            "demo_nestedkey02": "demo_nestedkey02_value"
+                        },
+                        "demo_key04": "demo_key04_value01"
+                    },
+                    "salt": {
+                        "lookup": {
+                            "master": "salt.tkclabs.io",
+                            "salt_api": {
+                                "certificate_contents": "SomeCertContent",
+                                "private_key_contents": "SomePrivKeyContent"
+                            }
+                        },
+                        "demo_key01": "demo_key01_value01",
+                        "demo_key02": {
+                            "demo_nestedkey01": "demo_nestedkey01_value",
+                            "demo_nestedkey02": "demo_nestedkey02_value"
+                    }
+                }
+            }
 
     Returns:
         dict: The differences between the two environments.
+
+    Example:
+        .. code-block:: python
+        {'ghar01.tkclabs.io': {'common': {'demo_key01': 'unchanged',
+                                        'demo_key02': {'demo_nestedkey01': 'unchanged',
+                                                        'demo_nestedkey02': 'modified',
+                                                        'demo_nestedkey03': 'added'},
+                                        'demo_key04': 'unchanged'},
+                            'ghar': {'demo_key01': 'unchanged',
+                                        'demo_key02': {'demo_nestedkey01': 'unchanged',
+                                                    'demo_nestedkey02': 'unchanged'},
+                                        'lookup': {'token': 'unchanged'}}},
+        'ghar02.tkclabs.io': {'common': {'demo_key01': 'unchanged',
+                                        'demo_key02': {'demo_nestedkey01': 'unchanged',
+                                                        'demo_nestedkey02': 'modified',
+                                                        'demo_nestedkey03': 'added'},
+                                        'demo_key04': 'unchanged'},
+                            'ghar': {'demo_key01': 'unchanged',
+                                        'demo_key02': {'demo_nestedkey01': 'unchanged',
+                                                    'demo_nestedkey02': 'unchanged'},
+                                        'lookup': {'token': 'unchanged'}}},
+        'ghar03.tkclabs.io': {'common': {'demo_key01': 'unchanged',
+                                        'demo_key02': {'demo_nestedkey01': 'unchanged',
+                                                        'demo_nestedkey02': 'unchanged'},
+                                        'demo_key04': 'unchanged'},
+                            'ghar': {'demo_key01': 'unchanged',
+                                        'demo_key02': {'demo_nestedkey01': 'unchanged',
+                                                    'demo_nestedkey02': 'unchanged'},
+                                        'lookup': {'token': 'unchanged'}}},
+        'salt01.tkclabs.io': {'common': {'demo_key01': 'unchanged',
+                                        'demo_key02': {'demo_nestedkey01': 'unchanged',
+                                                        'demo_nestedkey02': 'modified',
+                                                        'demo_nestedkey03': 'added'},
+                                        'demo_key04': 'unchanged'},
+                            'salt': {'demo_key01': 'added',
+                                        'demo_key02': {'demo_nestedkey01': 'added',
+                                                    'demo_nestedkey02': 'added'},
+                                        'lookup': {'master': 'modified',
+                                                'salt_api': {'certificate_contents': 'unchanged',
+                                                                'private_key_contents': 'unchanged'}}}}}
+
     """
     changes = {}
 
@@ -68,24 +242,14 @@ def determine_changes(target_pillarenv, incoming_pillarenv, path=None):
 
     for key in incoming_pillarenv.keys():
         if key not in target_pillarenv:
-            changes[key] = "added"
+            if isinstance(incoming_pillarenv[key], dict):
+                changes[key] = {}
+                for sub_key in incoming_pillarenv[key].keys():
+                    changes[key][sub_key] = "added"
+            else:
+                changes[key] = "added"
 
     return changes
-
-
-def remove_unchanged(data):
-    if isinstance(data, dict):
-        keys_to_remove = []
-        for key, value in data.items():
-            if isinstance(value, dict):
-                remove_unchanged(value)
-                if not value:  # if the dictionary is empty after removing unchanged
-                    keys_to_remove.append(key)
-            elif value == "unchanged":
-                keys_to_remove.append(key)
-        for key in keys_to_remove:
-            del data[key]
-    return data
 
 
 def validate_pr(minion_ids, target_pillarenv, incoming_pillarenv):
@@ -118,5 +282,5 @@ def validate_pr(minion_ids, target_pillarenv, incoming_pillarenv):
         incoming_pillar[id] = incoming_pillar_content
 
     compared_pillar = determine_changes(target_pillar, incoming_pillar)
-    changes = remove_unchanged(compared_pillar)
+    changes = _remove_unchanged(compared_pillar)
     return changes
