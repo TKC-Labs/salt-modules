@@ -35,7 +35,7 @@ def _remove_unchanged(data):
         keys_to_remove = []
         for key, value in data.items():
             if isinstance(value, dict):
-                remove_unchanged(value)
+                _remove_unchanged(value)
                 if not value:  # if the dictionary is empty after removing unchanged
                     keys_to_remove.append(key)
             elif value == "unchanged":
