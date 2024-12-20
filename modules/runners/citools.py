@@ -3,8 +3,8 @@ Salt runner module providing CI tools and utilities.
 
 Provides utility functions that CI workflows might find helpful which can be exposed from the salt-api runner client.
 """
-
 import logging
+from pprint import pprint
 
 # This lets us python -m pydoc modules/runners/citools.py and not need
 # to worry about the salt dependency in the available python environment.
@@ -18,60 +18,7 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 
-def _remove_unchanged(data):
-    """
-    Removes dict tree nodes that are marked as "unchanged".
-
-    This is a helper function to adjust the final output produced by the
-    validate_pr function.
-
-    Args:
-        data (dict): The dictionary to remove unchanged nodes from.
-
-    Returns:
-        dict: The dictionary with unchanged nodes removed.
-    """
-    if isinstance(data, dict):
-        keys_to_remove = []
-        for key, value in data.items():
-            if isinstance(value, dict):
-                _remove_unchanged(value)
-                if not value:  # if the dictionary is empty after removing unchanged
-                    keys_to_remove.append(key)
-            elif value == "unchanged":
-                keys_to_remove.append(key)
-        for key in keys_to_remove:
-            del data[key]
-    return data
-
-
-def get_pillar_for_env(minion_id, pillarenv):
-    """
-    Get the pillar data for a minion in a specific environment.
-
-    Args:
-        minion_id (str): The minion ID. (hostname, fqdn, etc.)
-        env (str): The environment. (base, dev.<change_id>)
-
-          In salt the "base" environment often maps to either the "main" or
-          "master" branch. Other environments can be statically mapped to
-          branches but using dynamic __env__ mapping is better for CI
-          purposes.
-
-    Returns:
-        dict: The rendered pillar data for the minion_id and pillarenv
-    """
-    opts = salt.config.master_config("/etc/salt/master")
-
-    opts["pillarenv"] = pillarenv
-    grains = salt.loader.grains(opts)
-    pillar = salt.pillar.Pillar(opts, grains, minion_id, pillarenv)
-    pillar_data = pillar.compile_pillar()
-
-    return pillar_data
-
-
-def determine_changes(target_pillarenv, incoming_pillarenv):
+def _determine_pillar_changes(target_pillarenv, incoming_pillarenv):
     """
     Compare the pillar data for a minion in two different environments.
 
@@ -230,7 +177,9 @@ def determine_changes(target_pillarenv, incoming_pillarenv):
             if isinstance(target_pillarenv[key], dict):
                 changes[key] = {}
                 changes[key].update(
-                    determine_changes(target_pillarenv[key], incoming_pillarenv[key])
+                    _determine_pillar_changes(
+                        target_pillarenv[key], incoming_pillarenv[key]
+                    )
                 )
                 continue
 
@@ -252,9 +201,114 @@ def determine_changes(target_pillarenv, incoming_pillarenv):
     return changes
 
 
-def validate_pr(minion_ids, target_pillarenv, incoming_pillarenv):
+def _remove_unchanged_pillar(data):
     """
-    Validate a PR by comparing the pillar data for the PR's target and incoming environments.
+    Removes dict tree nodes that are marked as "unchanged".
+
+    This is a helper function to adjust the final output produced by the
+    validate_pillar_pr function.
+
+    Args:
+        data (dict): The dictionary to remove unchanged nodes from.
+
+    Returns:
+        dict: The dictionary with unchanged nodes removed.
+    """
+    if isinstance(data, dict):
+        keys_to_remove = []
+        for key, value in data.items():
+            if isinstance(value, dict):
+                _remove_unchanged_pillar(value)
+                if not value:  # if the dictionary is empty after removing unchanged
+                    keys_to_remove.append(key)
+            elif value == "unchanged":
+                keys_to_remove.append(key)
+        for key in keys_to_remove:
+            del data[key]
+    return data
+
+
+def update_local_git_content():
+    """Attempt to get the latest Git content
+
+    This function will attempt to update the fileserver and git_pillar
+    content by running the fileserver.update and git_pillar.update
+    """
+    opts = salt.config.master_config("/etc/salt/master")
+
+    # Run a fileserver.update
+    opts["fun"] = "fileserver.update"
+    opts["arg"] = []  # No arguments
+    runner = salt.runner.Runner(opts)
+    runner.run()
+
+    # Run a git_pillar.update
+    opts["fun"] = "git_pillar.update"
+    opts["arg"] = []  # No arguments
+    runner = salt.runner.Runner(opts)
+    runner.run()
+
+
+def get_lowstate_for_env(minion_id, saltenv):
+    """
+    Get the lowstate data for a minion in a specific environment.
+
+    Args:
+        minion_id (str): The minion ID. (hostname, fqdn, etc.)
+        saltenv (str): The environment. (base, dev.<change_id>)
+
+    Returns:
+        list: The lowstate ids for the minion_id and saltenv
+    """
+    opts = salt.config.master_config("/etc/salt/master")
+
+    opts["saltenv"] = saltenv
+    grains = salt.loader.grains(opts)
+    pillar = salt.pillar.Pillar(opts, grains, minion_id, saltenv)
+    pillar.compile_pillar()
+
+    # Create a state object and gather the lowstate
+    state = salt.state.HighState(opts)
+    low_chunks = state.compile_low_chunks()
+    pprint(low_chunks)
+
+    # Gather just the state_ids that are in the saltenv
+    state_ids_to_run = [
+        item["__id__"] for item in low_chunks if item.get("__env__", None) == saltenv
+    ]
+
+    return state_ids_to_run
+
+
+def get_pillar_for_env(minion_id, pillarenv):
+    """
+    Get the pillar data for a minion in a specific environment.
+
+    Args:
+        minion_id (str): The minion ID. (hostname, fqdn, etc.)
+        env (str): The environment. (base, dev.<change_id>)
+
+          In salt the "base" environment often maps to either the "main" or
+          "master" branch. Other environments can be statically mapped to
+          branches but using dynamic __env__ mapping is better for CI
+          purposes.
+
+    Returns:
+        dict: The rendered pillar data for the minion_id and pillarenv
+    """
+    opts = salt.config.master_config("/etc/salt/master")
+
+    opts["pillarenv"] = pillarenv
+    grains = salt.loader.grains(opts)
+    pillar = salt.pillar.Pillar(opts, grains, minion_id, pillarenv)
+    pillar_data = pillar.compile_pillar()
+
+    return pillar_data
+
+
+def validate_pillar_pr(minion_ids, target_pillarenv, incoming_pillarenv):
+    """
+    Validate a pillar PR by comparing the pillar data for the PR's target and incoming environments.
 
     Args:
         minion_ids (list): The minion IDs to validate.
@@ -268,7 +322,7 @@ def validate_pr(minion_ids, target_pillarenv, incoming_pillarenv):
       pillar environments for the web01.local and srv01.local minions
 
     .. code-block:: bash
-     salt-run citools.validate_pr '[web01.local,srv01.local]' base dev.change_common_pillar
+     salt-run citools.validate_pillar_pr '[web01.local,srv01.local]' base dev.change_common_pillar
 
     """
     target_pillar = {}
@@ -281,6 +335,30 @@ def validate_pr(minion_ids, target_pillarenv, incoming_pillarenv):
         target_pillar[id] = target_pillar_content
         incoming_pillar[id] = incoming_pillar_content
 
-    compared_pillar = determine_changes(target_pillar, incoming_pillar)
-    changes = _remove_unchanged(compared_pillar)
+    compared_pillar = _determine_pillar_changes(target_pillar, incoming_pillar)
+    changes = _remove_unchanged_pillar(compared_pillar)
     return changes
+
+
+def validate_state_pr(minion_ids, target_saltenv, incoming_saltenv):
+    """ 
+    Validate a state PR by comparing the lowstate data for the PR's target and incoming environments.
+    """
+    lowstate_changes = {}
+
+    for id in minion_ids:
+        target_lowstate_content = get_lowstate_for_env(id, target_saltenv)
+        incoming_lowstate_content = get_lowstate_for_env(id, incoming_saltenv)
+
+        state_ids_added = set(incoming_lowstate_content) - set(target_lowstate_content)
+        state_ids_removed = set(target_lowstate_content) - set(
+            incoming_lowstate_content
+        )
+
+        lowstate_changes[id] = {}
+        if len(state_ids_added) > 0:
+            lowstate_changes[id]["added"] = list(state_ids_added)
+        if len(state_ids_removed) > 0:
+            lowstate_changes[id]["removed"] = list(state_ids_removed)
+
+    return lowstate_changes
