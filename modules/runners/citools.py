@@ -3,6 +3,7 @@ Salt runner module providing CI tools and utilities.
 
 Provides utility functions that CI workflows might find helpful which can be exposed from the salt-api runner client.
 """
+
 import logging
 from pprint import pprint
 
@@ -174,7 +175,9 @@ def _determine_pillar_changes(target_pillarenv, incoming_pillarenv):
             continue
 
         if key in incoming_pillarenv:
-            if isinstance(target_pillarenv[key], dict):
+            if isinstance(target_pillarenv[key], dict) and isinstance(
+                incoming_pillarenv[key], dict
+            ):
                 changes[key] = {}
                 changes[key].update(
                     _determine_pillar_changes(
@@ -182,6 +185,11 @@ def _determine_pillar_changes(target_pillarenv, incoming_pillarenv):
                     )
                 )
                 continue
+
+            if isinstance(target_pillarenv[key], dict) and not isinstance(
+                incoming_pillarenv[key], dict
+            ):
+                changes[key] = "modified"
 
             if target_pillarenv[key] != incoming_pillarenv[key]:
                 changes[key] = "modified"
@@ -341,7 +349,7 @@ def validate_pillar_pr(minion_ids, target_pillarenv, incoming_pillarenv):
 
 
 def validate_state_pr(minion_ids, target_saltenv, incoming_saltenv):
-    """ 
+    """
     Validate a state PR by comparing the lowstate data for the PR's target and incoming environments.
     """
     lowstate_changes = {}
