@@ -8,7 +8,7 @@ This repository contains custom salt modules for use in TKC Labs
 
 Salt CI Tools: [modules/runners/citools.py](modules/runners/citools.py)
 
-Provides utility functions that CI workfliws might find helpful which can be exposed from the salt-api runner client.
+Provides utility functions that CI workflows might find helpful which can be exposed from the salt-api runner client.
 
 Functions:
   - `validate_pillar_pr `: Validate a PR by comparing the pillar data for the PR's target and incoming environments.
@@ -17,7 +17,7 @@ Functions:
 
 ### Example output: validate_pillar_pr
 
-This is a very minimal example where I added demo keys to a salt pillar repository to demonstrate the kind of output the `vaidate_pr` function can help create.
+This is a very minimal example where I added demo keys to a salt pillar repository to demonstrate the kind of output the `vaidate_pillar_pr` function can help create.
 
 #### Salt Pillar Validation: `success`
 
