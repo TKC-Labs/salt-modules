@@ -6,6 +6,8 @@ to a live module.
 """
 
 import logging
+
+import salt.loader
 from salt.exceptions import SaltInvocationError
 
 
@@ -34,3 +36,18 @@ def test_param(minion_id=None):
 
     return ret
 
+
+def tkcmod_test():
+    """
+    Load and use an execution module from a runner module.
+    """
+    mods = salt.loader.minion_mods(__opts__)
+    return mods["tkcmod.test"]()
+
+
+def tkcmod_test():
+    """
+    Load and use an execution module from a runner module.
+    """
+    mods = salt.loader.minion_mods(__opts__)
+    return mods["tkcmod.test_param"]()
