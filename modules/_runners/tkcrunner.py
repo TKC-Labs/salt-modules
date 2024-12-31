@@ -45,9 +45,9 @@ def tkcmod_test():
     return mods["tkcmod.test"]()
 
 
-def tkcmod_test():
+def tkcmod_test_param(minion_id):
     """
     Load and use an execution module from a runner module.
     """
     mods = salt.loader.minion_mods(__opts__)
-    return mods["tkcmod.test_param"]()
+    return mods["tkcmod.test_param"](minion_id)
