@@ -6,7 +6,7 @@ This repository contains custom salt modules for use in TKC Labs
 
 ### Runners
 
-Salt CI Tools: [modules/runners/citools.py](modules/runners/citools.py)
+Salt CI Tools: [modules/_runners/citools.py](modules/_runners/citools.py)
 
 Provides utility functions that CI workflows might find helpful which can be exposed from the salt-api runner client.
 
